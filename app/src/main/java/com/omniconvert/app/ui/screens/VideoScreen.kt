@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -20,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.omniconvert.app.model.MediaItem
 import com.omniconvert.app.model.MediaType
@@ -32,6 +34,7 @@ import com.omniconvert.app.util.FFmpegManager
 import com.omniconvert.app.util.FileUtils
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.roundToLong
 
 enum class VideoSubMode {
     CONVERT,
@@ -41,6 +44,8 @@ enum class VideoSubMode {
 
 @Composable
 fun VideoScreen(
+    initialUri: Uri? = null,
+    defaultHardwareAcceleration: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -51,19 +56,28 @@ fun VideoScreen(
     var currentSubMode by remember { mutableStateOf(VideoSubMode.CONVERT) }
 
     var targetFormat by remember { mutableStateOf("mp4") }
-    var hardwareAcceleration by remember { mutableStateOf(true) }
+    var hardwareAcceleration by remember { mutableStateOf(defaultHardwareAcceleration) }
     var resolution by remember { mutableStateOf("original") }
     var crfValue by remember { mutableFloatStateOf(23f) }
     var targetMb by remember { mutableStateOf<Float?>(null) }
     var muteAudio by remember { mutableStateOf(false) }
 
-    var trimStartSec by remember { mutableFloatStateOf(0f) }
-    var trimEndSec by remember { mutableFloatStateOf(0f) }
+    var trimStartMs by remember { mutableLongStateOf(0L) }
+    var trimEndMs by remember { mutableLongStateOf(0L) }
+    var trimStartText by remember { mutableStateOf("0") }
+    var trimEndText by remember { mutableStateOf("0") }
 
     var isConverting by remember { mutableStateOf(false) }
     var conversionProgress by remember { mutableFloatStateOf(0f) }
     var conversionSpeed by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf("") }
+
+    fun setTrimRange(durationMs: Long) {
+        trimStartMs = 0L
+        trimEndMs = durationMs.coerceAtLeast(1L)
+        trimStartText = trimStartMs.toString()
+        trimEndText = trimEndMs.toString()
+    }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -72,9 +86,16 @@ fun VideoScreen(
             coroutineScope.launch {
                 val item = FileUtils.getMediaItemFromUri(context, it, MediaType.VIDEO)
                 selectedItem = item
-                trimStartSec = 0f
-                trimEndSec = (item.durationMs / 1000f).coerceAtLeast(1f)
+                setTrimRange(item.durationMs)
             }
+        }
+    }
+
+    LaunchedEffect(initialUri) {
+        initialUri?.let {
+            val item = FileUtils.getMediaItemFromUri(context, it, MediaType.VIDEO)
+            selectedItem = item
+            setTrimRange(item.durationMs)
         }
     }
 
@@ -199,20 +220,51 @@ fun VideoScreen(
 
         // 3. Trim Settings
         if (currentSubMode == VideoSubMode.TRIM && selectedItem != null) {
-            val totalDurationSec = (selectedItem!!.durationMs / 1000f).coerceAtLeast(1f)
+            val totalDurationMs = selectedItem!!.durationMs.coerceAtLeast(1L)
             SectionCard(title = "Обрезка по времени") {
                 Text(
-                    "Начало: ${String.format("%.1f", trimStartSec)} сек  •  Конец: ${String.format("%.1f", trimEndSec)} сек",
+                    "Длительность фрагмента: ${trimEndMs - trimStartMs} мс",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = trimStartText,
+                        onValueChange = { value ->
+                            trimStartText = value.filter(Char::isDigit)
+                            trimStartText.toLongOrNull()?.let { millis ->
+                                trimStartMs = millis.coerceIn(0L, (trimEndMs - 1L).coerceAtLeast(0L))
+                            }
+                        },
+                        label = { Text("Начало, мс") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = trimEndText,
+                        onValueChange = { value ->
+                            trimEndText = value.filter(Char::isDigit)
+                            trimEndText.toLongOrNull()?.let { millis ->
+                                trimEndMs = millis.coerceIn((trimStartMs + 1L).coerceAtMost(totalDurationMs), totalDurationMs)
+                            }
+                        },
+                        label = { Text("Конец, мс") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
                 RangeSlider(
-                    value = trimStartSec..trimEndSec,
+                    value = trimStartMs.toFloat()..trimEndMs.toFloat(),
                     onValueChange = { range ->
-                        trimStartSec = range.start
-                        trimEndSec = range.endInclusive
+                        trimStartMs = range.start.roundToLong()
+                        trimEndMs = range.endInclusive.roundToLong()
+                        trimStartText = trimStartMs.toString()
+                        trimEndText = trimEndMs.toString()
                     },
-                    valueRange = 0f..totalDurationSec,
+                    valueRange = 0f..totalDurationMs.toFloat(),
                     colors = SliderDefaults.colors(
                         thumbColor = MaterialTheme.colorScheme.primary,
                         activeTrackColor = MaterialTheme.colorScheme.primary,
@@ -231,12 +283,12 @@ fun VideoScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Аппаратное ускорение (Qualcomm MediaCodec)",
+                        text = "Аппаратное ускорение (MediaCodec)",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Ускоряет обработку в 5-10 раз и экономит заряд батареи",
+                        text = "Использует кодировщик устройства, если он доступен",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                     )
@@ -326,8 +378,8 @@ fun VideoScreen(
                             resolution = resolution,
                             crf = crfValue.toInt(),
                             targetSizeMb = targetMb,
-                            trimStartMs = (trimStartSec * 1000).toLong(),
-                            trimEndMs = (trimEndSec * 1000).toLong(),
+                            trimStartMs = trimStartMs,
+                            trimEndMs = trimEndMs,
                             muteAudio = muteAudio
                         )
 

@@ -34,6 +34,7 @@ import java.io.File
 
 @Composable
 fun AudioScreen(
+    initialUri: Uri? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -55,6 +56,12 @@ fun AudioScreen(
             coroutineScope.launch {
                 selectedItem = FileUtils.getMediaItemFromUri(context, it, MediaType.AUDIO)
             }
+        }
+    }
+
+    LaunchedEffect(initialUri) {
+        initialUri?.let {
+            selectedItem = FileUtils.getMediaItemFromUri(context, it, MediaType.AUDIO)
         }
     }
 

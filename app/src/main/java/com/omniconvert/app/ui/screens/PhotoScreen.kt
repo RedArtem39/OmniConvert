@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
 import com.omniconvert.app.model.MediaType
 import com.omniconvert.app.model.PhotoOptions
 import com.omniconvert.app.ui.components.ActionButton
@@ -41,6 +42,8 @@ import java.io.File
 
 @Composable
 fun PhotoScreen(
+    initialUris: List<Uri> = emptyList(),
+    defaultStripExif: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -51,11 +54,15 @@ fun PhotoScreen(
     var targetFormat by remember { mutableStateOf("webp") }
     var quality by remember { mutableFloatStateOf(85f) }
     var resizePercent by remember { mutableIntStateOf(100) }
-    var stripExif by remember { mutableStateOf(true) }
+    var stripExif by remember { mutableStateOf(defaultStripExif) }
 
     var isConverting by remember { mutableStateOf(false) }
     var conversionProgress by remember { mutableFloatStateOf(0f) }
     var conversionStatusText by remember { mutableStateOf("") }
+
+    LaunchedEffect(initialUris) {
+        if (initialUris.isNotEmpty()) selectedUris = initialUris
+    }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
@@ -76,7 +83,7 @@ fun PhotoScreen(
         // Top Banner / Picker
         FilePickerBanner(
             title = if (selectedUris.isEmpty()) "Выберите фото" else "Выбрано фото: ${selectedUris.size}",
-            subtitle = if (selectedUris.isEmpty()) "Поддерживает JPG, PNG, WEBP, HEIC, AVIF" else "Нажмите, чтобы изменить выбор",
+            subtitle = if (selectedUris.isEmpty()) "Поддерживает JPG, PNG и WEBP" else "Нажмите, чтобы изменить выбор",
             icon = Icons.Rounded.AddPhotoAlternate,
             onClick = { photoPickerLauncher.launch("image/*") }
         )
@@ -87,14 +94,20 @@ fun PhotoScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                items(selectedUris) { uri ->
+                items(selectedUris, key = { it.toString() }) { uri ->
                     Box(
                         modifier = Modifier
                             .size(80.dp)
                             .clip(RoundedCornerShape(12.dp))
                     ) {
                         Image(
-                            painter = rememberAsyncImagePainter(uri),
+                            painter = rememberAsyncImagePainter(
+                                remember(context, uri) { ImageRequest.Builder(context)
+                                    .data(uri)
+                                    .size(160)
+                                    .crossfade(false)
+                                    .build() }
+                            ),
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
@@ -127,7 +140,7 @@ fun PhotoScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                listOf("webp", "jpg", "png", "heic", "avif").forEach { fmt ->
+                listOf("webp", "jpg", "png").forEach { fmt ->
                     ChoiceChip(
                         selected = targetFormat == fmt,
                         text = fmt.uppercase(),

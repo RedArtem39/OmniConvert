@@ -1,7 +1,9 @@
 package com.omniconvert.app.util
 
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
 import com.omniconvert.app.model.AudioOptions
 import com.omniconvert.app.model.VideoOptions
@@ -11,6 +13,20 @@ import kotlin.coroutines.resume
 
 object FFmpegManager {
 
+    private const val PROGRESS_UPDATE_INTERVAL_MS = 100L
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun throttledProgressReporter(onProgress: (Float, String) -> Unit): (Float, String) -> Unit {
+        var lastReportTime = 0L
+        return { progress, speed ->
+            val now = SystemClock.elapsedRealtime()
+            if (progress >= 1f || now - lastReportTime >= PROGRESS_UPDATE_INTERVAL_MS) {
+                lastReportTime = now
+                mainHandler.post { onProgress(progress, speed) }
+            }
+        }
+    }
+
     suspend fun convertVideo(
         inputPath: String,
         outputPath: String,
@@ -18,6 +34,7 @@ object FFmpegManager {
         options: VideoOptions,
         onProgress: (Float, String) -> Unit
     ): Result<File> = suspendCancellableCoroutine { continuation ->
+        val reportProgress = throttledProgressReporter(onProgress)
         val cmdList = mutableListOf<String>()
 
         cmdList.add("-y")
@@ -137,7 +154,7 @@ object FFmpegManager {
                     val time = statistics.time.toFloat()
                     val progress = (time / effectiveDurationMs).coerceIn(0f, 1f)
                     val speed = String.format(java.util.Locale.US, "%.1fx", statistics.speed)
-                    onProgress(progress, speed)
+                    reportProgress(progress, speed)
                 }
             }
         )
@@ -154,6 +171,7 @@ object FFmpegManager {
         options: AudioOptions,
         onProgress: (Float, String) -> Unit
     ): Result<File> = suspendCancellableCoroutine { continuation ->
+        val reportProgress = throttledProgressReporter(onProgress)
         val cmdList = mutableListOf<String>()
         cmdList.add("-y")
 
@@ -217,7 +235,7 @@ object FFmpegManager {
             { stats ->
                 if (durationMs > 0 && stats != null) {
                     val progress = (stats.time.toFloat() / durationMs).coerceIn(0f, 1f)
-                    onProgress(progress, String.format(java.util.Locale.US, "%.1fx", stats.speed))
+                    reportProgress(progress, String.format(java.util.Locale.US, "%.1fx", stats.speed))
                 }
             }
         )
